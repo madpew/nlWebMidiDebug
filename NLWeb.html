@@ -1,0 +1,1043 @@
+﻿
+<!doctype html>
+<html>
+    <head>
+        <meta content="text/html; charset=UTF-8" http-equiv="content-type">
+            
+            <title>nanoloop USB-MIDI</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, target-densitydpi=device-dpi, user-scalable=yes">
+                <link rel="stylesheet" type="text/css" href="u.css">
+                    <script>
+
+
+                        var context = null;
+                        var midiAccess = null;
+                        var nlmidifound = 0;
+                        var nlMIDIin = null;
+                        var nlMIDIout = null;
+                        var wait = 0;
+                        var wait1 = 0;
+                        var pcount = 0;
+                        var datalng = 0;
+                        var datapos = 0;
+                        var tpos = 0;
+                        var tcount = 0;
+                        var kb = 0;
+                        var gba_data = new Uint32Array(16);
+                        var timeout = 0;
+                        var nanoloopMIDIfound = false;
+                        var puffer;
+                        var fpuffer;
+                        var currentselection = "files";
+                        var flng = 0;
+                        var fpos = 0;
+                        var bankname = "bank";
+
+
+
+
+
+
+                        window.addEventListener('load', function () {
+
+                            window.AudioContext = window.AudioContext || window.webkitAudioContext;
+
+                            context = new AudioContext();
+                            if (navigator.requestMIDIAccess) {
+                                navigator.requestMIDIAccess({ sysex: true }).then(onMIDIInit, onMIDIReject);
+                                document.getElementById("midistatus").textContent = "MIDI OK";
+
+
+                            }
+                            else {
+                                document.getElementById("midistatus").textContent = "MIDI not supported or not enabled.";
+                            }
+
+
+
+
+                        });
+
+
+                        function onMIDIReject(err) {
+
+                            document.getElementById("midistatus").textContent = "MIDI SysEx is not enabled for this site.";
+
+
+                        }
+
+
+
+                        function findMIDIports() {
+                            var inputs = midiAccess.inputs.values();
+
+                            var nanoloopMIDIfound = 0;
+
+                            for (var input = inputs.next() ; input && !input.done; input = inputs.next()) {
+                                if (input.value.name == "nanoloop MIDI") {
+                                    nanoloopMIDIfound++;
+                                    nlMIDIin = input.value;
+                                    nlMIDIin.onmidimessage = MIDIMessageEventHandler;
+                                }
+                            }
+
+                            var outputs = midiAccess.outputs.values();
+
+                            for (var output = outputs.next() ; output && !output.done; output = outputs.next()) {
+
+                                if (output.value.name == "nanoloop MIDI") {
+                                    nanoloopMIDIfound++;
+                                    nlMIDIout = output.value;
+                                }
+                            }
+
+                            if (nanoloopMIDIfound == 2) // in and out
+                            {
+
+                                //    syncmode();
+                                document.getElementById("midistatus").textContent = "nanoloop USB-MIDI connected";
+                                document.getElementById("menu").style.visibility = "visible";
+                                document.getElementById("inhalt").style.visibility = "visible";
+                            }
+                            else {
+                                document.getElementById("midistatus").textContent = "no adaptor found";
+                                document.getElementById("inhalt").style.visibility = "hidden";
+                                document.getElementById("menu").style.visibility = "hidden";
+                            }
+                        }
+
+
+
+                        function onMIDIInit(midi) {
+
+
+                            midiAccess = midi;
+
+                            findMIDIports();
+
+                            midiAccess.onstatechange = findMIDIports;
+
+                        }
+
+
+
+
+                        function binarymode() {
+
+
+
+                            if (nlMIDIout) {
+                                try {
+
+                                    nlMIDIout.send([0xf0, 0x7e, 0x4e, 0x07, 0x01, 0, 0x4e, 0x41, 0x4e, 0x62, 26, 0, 0xf7]);
+
+                                }
+                                catch (err) {
+                                    wait = 0;
+                                    document.getElementById("infotextalt").innerHTML = err.message;
+                                }
+
+                            }
+
+                        }
+
+
+
+                        function send1(datum) {
+
+                            if (nlMIDIout) {
+                                try {
+
+                                    pcount = ((pcount + 1) & 0x7f);
+
+
+                                    if (pcount == 0)
+                                        nlMIDIout.send([0xf0, 0x7e, 0x00, 0x07, 0x02, pcount, 0x01, ((datum & 0x80) >> 1), (datum & 0x7f), 0x00, 0xf7], window.performance.now() + 30);
+                                    else
+                                        nlMIDIout.send([0xf0, 0x7e, 0x00, 0x07, 0x02, pcount, 0x01, ((datum & 0x80) >> 1), (datum & 0x7f), 0x00, 0xf7]);
+
+                                }
+                                catch (err) {
+                                    wait = 0;
+                                    document.getElementById("infotextalt").innerHTML = err.message;
+                                }
+
+                            }
+
+                        }
+
+                        function send4(datum) {
+                            var pos = 0, msbpos = 0, msbshift = 1, schreibpos = 0;
+                            var msb = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0]);
+                            var tmp = new Uint32Array(3);
+                            var datmp = 0xffffffff;
+
+                            var schieber = new Uint32Array([(0x80 << (8 * (3 - 0))), (0x80 << (8 * (3 - 1))), (0x80 << (8 * (3 - 2))), (0x80 << (8 * (3 - 3))), 0, 0, 0, 0]);
+
+                            var message = new Uint8Array([0xf0, 0x7e, 0x00, 0x07, 0x02, 0, 0x04, 0, 0, 0, 0, 0, 0, 0xf7]);
+
+                            if (nlMIDIout) {
+                                try {
+                                    tmp[0] = datum;
+                                    tmp[1] = 0;
+                                    msbshift = 1;
+
+                                    pcount = ((pcount + 1) & 0x7f);
+
+                                    message[5] = pcount;
+
+                                    for (pos = 0; pos != 8; pos++)
+                                        msb[pos] = 0;
+
+                                    for (pos = 0; pos != 4; pos++) {
+
+                                        tmp[1] |= (((tmp[0] >> (8 * (3 - pos))) & 0x80) >> msbshift);
+                                        msbshift++;
+
+                                    }
+
+
+                                    message[7] = tmp[1];
+
+                                    for (pos = 0; pos != 4; pos++) {
+                                        message[8 + pos] = ((tmp[0] >> (8 * (3 - pos))) & 0x7f);
+                                    }
+
+
+                                    nlMIDIout.send(message);
+
+                                }
+                                catch (err) {
+                                    wait = 0;
+                                    document.getElementById("infotextalt").innerHTML = err.message;
+                                }
+
+
+                            }
+                        }
+
+
+
+
+
+
+
+                        function MIDIMessageEventHandler(event) {
+
+                            var i = 0,
+                            len = event.data.length;
+                            var gba_spi_data = 0, bit = 0, dpos;
+
+                            if (wait != 0) {
+
+
+                                if (event.data[5] == pcount && wait < 100) {
+                                    if (event.data.length > 10) {
+                                        gba_data[6] = ((((event.data[7] << 1) & 0x80) | event.data[8]) << (8 * 3)) |
+                                        ((((event.data[7] << 2) & 0x80) | event.data[9]) << (8 * 2)) |
+                                        ((((event.data[7] << 3) & 0x80) | event.data[10]) << (8 * 1)) |
+                                        ((event.data[7] << 4) & 0x80) | event.data[11];
+                                    }
+
+                                    if (wait == 1) {
+                                        if (gba_data[6] == 0x72026202)
+                                            wait = 2;
+                                        else
+                                            wait = 1;
+
+                                        send4(0x00006202);
+                                    }
+                                    else if (wait == 2) {
+                                        document.getElementById("infotextalt").innerHTML = "transfer started";
+                                        wait = 3;
+                                        send4(0x00006102);
+                                    }
+                                    else if (wait == 3) {
+                                        if (datapos < 0xc0) {
+
+                                            if ((tpos & 2) == 0) {
+                                                send1(0);
+                                            }
+                                            else {
+                                                dpos = (datapos >> 1);
+                                                if (tpos & 1)
+                                                    send1(puffer[(dpos << 1)]);
+                                                else
+                                                    send1(puffer[(dpos << 1) + 1]);
+
+                                                datapos++;
+                                            }
+
+                                            if (datapos >= 0xc0)
+                                                wait = 4;
+
+                                            tpos++;
+
+                                        }
+
+                                    }
+                                    else if (wait == 4) {
+                                        wait = 5;
+                                        send4(0x00006200);
+                                    }
+                                    else if (wait == 5) {
+                                        wait = 6;
+                                        send4(0x00006202);
+                                    }
+                                    else if (wait == 6) {
+                                        wait = 7;
+                                        send4(0x000063d1);
+                                    }
+                                    else if (wait == 7) {
+                                        wait = 8;
+                                        send4(0x000063d1);
+                                    }
+
+
+                                    else if (wait == 8) {
+
+                                        wait = 9;
+
+                                        gba_data[1] = ((gba_data[6] & 0x00ff0000) >> 8) + 0xffff00d1;
+                                        gba_data[2] = ((gba_data[6] & 0x00ff0000) >> 16) + 0x0f;
+
+                                        send4(((gba_data[6] & 0x00ff0000) >> 16) + 0x0000640f);
+                                    }
+                                    else if (wait == 9) {
+                                        wait = 10;
+
+                                        gba_data[8] = datalng;
+
+                                        send4((gba_data[8] - 0x190) / 4);
+
+                                        datapos = 0xc0;
+                                    }
+                                    else if (wait == 10 || wait == 11) {
+
+
+                                        if (wait == 10) {
+                                            gba_data[3] = 0x0000c387;
+                                            gba_data[4] = ((((gba_data[6] & 0x00ff0000) >> 8) + gba_data[2]) + 0x00) | 0xffff0000;
+
+                                            tpos = 0;
+
+
+
+                                        }
+
+                                        if (datapos < datalng) {
+                                            gba_data[0] = gba_data[7] = puffer[datapos + 0] | (puffer[datapos + 1] << 8) | (puffer[datapos + 2] << 16) | (puffer[datapos + 3] << 24);
+
+
+                                            for (bit = 0; bit < 32; bit++) {
+                                                if ((gba_data[3] ^ gba_data[7]) & 0x01)
+                                                    gba_data[3] = ((gba_data[3] >> 1) ^ 0x0000c37b);
+                                                else
+                                                    gba_data[3] = (gba_data[3] >> 1);
+
+                                                gba_data[7] = (gba_data[7] >> 1);
+                                            }
+
+                                            gba_data[10] = 0x6f64 * gba_data[1];
+                                            gba_data[10] = gba_data[10] << 16;
+                                            gba_data[11] = 0x6573 * gba_data[1];
+                                            gba_data[1] = (gba_data[10] + gba_data[11]) + 1;
+                                            //   gba_data[1]			 =	((0x6f646573*gba_data[1])+1);
+
+
+
+                                            gba_data[8] = datapos;
+
+                                            gba_data[5] = (gba_data[0] ^ ((~(0x02000000 + gba_data[8])) + 1) ^ gba_data[1] ^ 0x43202f2f);
+
+                                            send4(gba_data[5]);
+
+
+                                            //   document.getElementById("daten").innerHTML+=(gba_data[1].toString(16)+"<br>");
+
+                                            datapos += 4;
+                                            /* */
+                                            wait = 11;
+
+                                            tpos++;
+                                            if (tpos == 1024 / 4) {
+                                                tpos = 0;
+                                                kb++;
+                                                document.getElementById("infotextalt").innerHTML = "Sent " + (kb.toString(10)) + " of " + Math.floor(datalng / 1024).toString(10) + "k";
+                                            }
+
+                                            if (datapos >= datalng)
+                                                wait = 12;
+
+                                        }
+
+                                    }
+                                    else if (wait == 12) {
+                                        for (bit = 0; bit < 32; bit++) {
+                                            if ((gba_data[3] ^ gba_data[4]) & 0x01)
+                                                gba_data[3] = (gba_data[3] >> 1) ^ 0x0000c37b;
+                                            else
+                                                gba_data[3] = gba_data[3] >> 1;
+
+                                            gba_data[4] = gba_data[4] >> 1;
+                                        }
+
+                                        wait = 13;
+                                        send4(0x00000065);
+                                        tcount++;
+
+
+                                    }
+                                    else if (wait == 13) {
+                                        if (gba_data[6] == 0x00750065 || timeout == 1024) {
+                                            if (gba_data[6] == 0x00750065)
+                                                document.getElementById("infotextalt").innerHTML = "Update loaded to GBA RAM.";
+                                            else
+                                                document.getElementById("infotextalt").innerHTML = "Error. Please try again.";
+
+                                            wait = 14;
+                                            send4(0x00000066);
+
+
+                                        }
+                                        else {
+                                            send4(0x00000065);
+                                            timeout++;
+                                        }
+                                    }
+                                    else if (wait == 14) {
+                                        wait = 15;
+                                        send4(gba_data[3]);
+                                    }
+                                    else if (wait == 15) {
+                                        send4(0);
+                                        document.getElementById("infotextalt").innerHTML += "The nanoloop logo should now appear on the game boy.<br><br>Hold B and press START+SELECT to write the update to the cart.<br><br>Do NOT press START or SELECT without holding B.";
+                                        wait = 16;
+
+                                    }
+                                    else if (wait == 16) {
+                                        //   syncmode();
+                                        wait = 17;
+                                    }
+
+
+
+
+
+                                }
+
+                                if (wait == 100 || wait == 101) // SYNC
+                                {
+                                    if (event.data[7] == 4) {
+                                        document.getElementById("modeinfo").innerHTML = "SYNC mode OK";
+                                        wait = 0;
+
+                                    }
+                                    else {
+                                        if (wait == 101) {
+                                            document.getElementById("modeinfo").innerHTML = "Error: " + event.data[6] + " " + event.data[7] + " " + event.data[8];
+                                            wait = 0;
+                                        }
+                                        else {
+                                            syncmode();
+                                        }
+                                    }
+
+
+                                }
+                                if (wait == 200)      // MIDI
+                                {
+                                    if (event.data[7] == 0) {
+                                        document.getElementById("modeinfo").innerHTML = "MIDI mode OK";
+
+                                    }
+                                    else {
+
+                                        document.getElementById("modeinfo").innerHTML = "Error: " + event.data[6] + " " + event.data[7] + " " + event.data[8];
+
+                                    }
+
+                                    wait = 0;
+                                }
+
+                                if (wait == 300)  // UPDATE
+                                {
+
+                                    if (event.data.length > 5 && event.data[5] == pcount) {
+                                        wait = 0;
+                                        if (datapos < datalng) {
+                                            wait = 300;
+                                            send1(puffer[datapos]);
+                                            datapos++;
+                                            tpos++;
+                                            if (tpos == 1024) {
+                                                tpos = 0;
+                                                kb++;
+                                                document.getElementById("byte_content").innerHTML = (kb.toString(10) + " of " + Math.floor(datalng / 1024).toString(10)) + "k sent";
+                                            }
+
+                                        }
+                                        else {
+                                            if (currentselection == "update1")
+                                                document.getElementById("byte_content").innerHTML = "Transfer complete. The 'n' should now disappear and nanoloop can be started with START.";
+                                        }
+
+                                    }
+
+                                }
+
+                                if (wait == 400) // wait receive mode
+                                {
+                                    if (event.data.length > 5) {
+                                        if (event.data[7] == 6) {
+                                            wait = 401;
+                                            document.getElementById("infotext").innerHTML = "Waiting for data...";
+
+                                        }
+                                    }
+                                }
+                                else if (wait == 401) // wait for valid bank data, ignore sync data
+                                {
+                                    tmp = (((event.data[7] << 1) & 0x80) | event.data[8]);
+
+                                    if (tmp == 0xae || tmp == 0xab) {
+                                        wait = 402;
+                                        typ = 1;
+                                    }
+                                    if (tmp == 0x24) {
+                                        wait = 402;
+                                        typ = 2;
+                                    }
+                                }
+                                if (wait == 402) // RECEIVE
+                                {
+                                    fpuffer[flng] = (((event.data[7] << 1) & 0x80) | event.data[8]);
+                                    flng++;
+                                    tcount++;
+                                    if (tcount == 1024) {
+                                        tcount = 0;
+                                        kb++;
+                                        document.getElementById("infotext").innerHTML = kb.toString(10) + " k in buffer";
+                                    }
+
+                                    if (flng == 65536) {
+                                        document.getElementById("infotext").innerHTML = "64 k, buffer full";
+                                    }
+
+                                    if (typ == 2 && flng == 1024 * 16) {
+                                        wait = 0;
+                                        var chk = new Uint8Array(2);
+
+                                        for (i = 0; i != 256 * 64 - 1; i++)
+                                            chk[0] -= fpuffer[i];
+
+                                        chk[0] = ((chk[0] - 0x19) & 0xFF);
+                                        if (chk[0] == fpuffer[1024 * 16 - 1])
+                                            document.getElementById("infotext").innerHTML = "nanoloop 2 bank: ";
+
+
+                                        for (i = 0; i != 8; i++) {
+                                            if (fpuffer[0x3c10 + i] > 0) {
+                                                if (fpuffer[0x3c10 + i] > 10)
+                                                    document.getElementById('infotext').textContent += String.fromCharCode(fpuffer[0x3c10 + i] + 0x36);
+                                                else
+                                                    document.getElementById('infotext').textContent += fpuffer[0x3c10 + i] + 1;
+                                            }
+                                            else {
+                                                document.getElementById('infotext').textContent += " ";
+                                            }
+                                        }
+                                    }
+
+                                }
+
+                                if (wait == 500)  // send file
+                                {
+
+                                    if (event.data.length > 5 && event.data[5] == pcount) {
+                                        wait = 0;
+                                        if (fpos < flng) {
+                                            wait = 500;
+                                            send1(fpuffer[fpos]);
+                                            fpos++;
+                                            tpos++;
+                                            if (tpos == 1024) {
+                                                tpos = 0;
+                                                kb++;
+                                                document.getElementById("infotext").innerHTML = (kb.toString(10) + " of " + (flng / 1024).toString(10)) + "k sent";
+                                            }
+
+                                        }
+                                        else {
+
+                                            document.getElementById("infotext").innerHTML = "Done";
+                                        }
+
+                                    }
+
+                                }
+
+                            }
+
+                        }
+
+
+
+                        function readBlob(openname) {
+
+                            var files = document.getElementById(openname).files;
+                            if (!files.length) {
+                                alert('Please select a file!');
+                                return;
+                            }
+
+                            var file = files[0];
+                            var start = 0;
+                            var stop = file.size - 1;
+
+                            var reader = new FileReader();
+
+                            reader.onloadend = function (evt) {
+
+                                if (evt.target.readyState == FileReader.DONE) {
+                                    puffer = new Uint8Array(evt.target.result, evt.target.result.length);
+                                    flng = puffer.length;
+
+                                    if (flng > 65536)
+                                        flng = 65536;
+
+                                    fpuffer = new Uint8Array(puffer, flng);
+
+                                    document.getElementById('infotext').textContent = Math.floor(fpuffer.length / 1024) + " k";
+                                    datalng = puffer.length;
+                                    kb = 0;
+                                    kc = 0;
+                                    datapos = 1;
+                                    pcount = 0x7f;
+                                    binarymode();
+
+                                    if (fpuffer[0] == 0xae || fpuffer[0] == 0xab) {
+                                        typ = 1;
+                                        document.getElementById('infotext').textContent += " nanolop 1 bank";
+                                    }
+                                    if (fpuffer[0] == 0x24 && (flng == 16384 || flng == 16385)) {
+                                        typ = 2;
+                                        document.getElementById('infotext').textContent += " nanolop 2 bank: ";
+
+                                        for (i = 0; i != 8; i++) {
+                                            if (fpuffer[0x3c10 + i] > 0) {
+                                                if (fpuffer[0x3c10 + i] > 10)
+                                                    document.getElementById('infotext').textContent += String.fromCharCode(fpuffer[0x3c10 + i] + 0x36);
+                                                else
+                                                    document.getElementById('infotext').textContent += fpuffer[0x3c10 + i] - 1;
+                                            }
+                                            else {
+                                                document.getElementById('infotext').textContent += " ";
+                                            }
+                                        }
+                                    }
+
+                                }
+                            };
+
+                            var blob = file.slice(start, stop + 1);
+                            reader.readAsArrayBuffer(blob);
+
+                        }
+
+
+
+                        function readBlob2(openname) {
+
+                            var files = document.getElementById(openname).files;
+                            if (!files.length) {
+                                alert('Please select a file!');
+                                return;
+                            }
+
+                            var file = files[0];
+                            var start = 0;
+                            var stop = file.size - 1;
+
+                            var reader = new FileReader();
+
+                            reader.onloadend = function (evt) {
+
+                                if (evt.target.readyState == FileReader.DONE) {
+                                    puffer = new Uint8Array(evt.target.result, evt.target.result.length);
+                                    flng = puffer.length;
+
+
+
+                                    fpuffer = new Uint8Array(puffer, flng);
+
+                                    document.getElementById('byte_content').textContent = "loaded " + Math.floor(fpuffer.length / 1024) + " k file to buffer";
+                                    datalng = puffer.length;
+                                    kb = 0;
+                                    kc = 0;
+
+                                    datapos = 0;
+                                    kb = 0;
+                                    tpos = 0;
+                                    pcount = 0x7f;
+                                    binarymode();
+
+
+                                }
+                            };
+
+                            var blob = file.slice(start, stop + 1);
+                            reader.readAsArrayBuffer(blob);
+
+                        }
+
+
+                        function syncmode() {
+
+                            if (nlMIDIout) {
+                                try {
+                                    if (wait == 100)
+                                        wait = 101;
+                                    else
+                                        wait = 100;
+
+                                    nlMIDIout.send([0xf0,
+                                                     0x7e,
+                                                     0x4e,
+                                                     0x07,
+                                                     0x01,
+                                                     0,
+
+                                                     0x4e,
+                                                     0x41,
+                                                     0x4e,
+                                                     0x53,
+
+                                                     32,
+                                                     0,
+                                                     0xf7]);
+                                    document.getElementById("modeinfo").innerHTML = "...";
+                                }
+                                catch (err) {
+                                    wait = 0;
+                                    document.getElementById("infotextalt").innerHTML = err.message;
+                                }
+
+                            }
+                        }
+
+                        function midimode() {
+
+
+
+
+
+                            if (wait == 0) {
+
+                                if (nlMIDIout) {
+                                    try {
+                                        wait = 200;
+                                        nlMIDIout.send([0xf0,
+                                                         0x7e,
+                                                         0x4e,
+                                                         0x07,
+                                                         0x01,
+                                                         0,
+
+                                                         0x4e,
+                                                         0x41,
+                                                         0x4e,
+                                                         0x4d,
+
+                                                         32,
+                                                         0,
+                                                         0xf7]);
+                                        document.getElementById("modeinfo").innerHTML = "...";
+
+                                    }
+                                    catch (err) {
+                                        wait = 0;
+                                        document.getElementById("infotextalt").innerHTML = err.message;
+                                    }
+
+                                }
+                            }
+                        }
+
+                        function laden(url) {
+                            document.getElementById('byte_content').textContent = "fetching ROM...";
+                            document.getElementById("infotext").style.visibility = "hidden";
+                            var reader = new FileReader();
+
+                            reader.onloadend = function (evt) {
+
+                                if (evt.target.readyState == FileReader.DONE) {
+                                    document.getElementById("infotext").style.visibility = "visible";
+                                    puffer = new Uint8Array(evt.target.result); // evt.target.result
+                                    //    flng=evt.target.result.length;
+                                    datalng = puffer.length;
+                                    //  datalng=0x1C0;
+                                    datapos = 0;
+                                    kb = 0;
+                                    tpos = 0;
+                                    pcount = 0x7f;
+                                    binarymode();
+                                    //         wait=1;
+                                    //        send4(0x00006202);
+                                    document.getElementById('byte_content').textContent = "Loaded " + (datalng / 1024).toString(10) + "k ROM to buffer: " + url;
+                                    timeout = 0;
+
+                                }
+                            };
+
+
+
+
+
+
+                            var oReq = new XMLHttpRequest();
+                            oReq.open("GET", url, true);
+                            oReq.responseType = "blob";
+
+                            oReq.onload = function (oEvent) {
+                                var blob = oReq.response;
+                                reader.readAsArrayBuffer(blob);
+                                // ...
+                            };
+
+                            oReq.send();
+                        }
+
+
+
+
+
+
+                        function download(content, filename) {
+
+                            if (flng > 0) {
+
+                                var tmparray = new Uint8Array(flng);
+                                var i = 0;
+                                for (i = 0; i != flng; i++) {
+                                    tmparray[i] = content[i];
+                                }
+
+                                var a = document.createElement('a');
+                                var blob = new Blob([tmparray], { 'type': 'application/octet-stream' });
+                                a.href = window.URL.createObjectURL(blob);
+
+                                if (typ == 1)
+                                    a.download = filename + ".nl1";
+                                else if (typ == 2)
+                                    a.download = filename + ".nl2";
+                                else
+                                    a.download = filename;
+
+                                if (document.createEvent) {
+                                    var event = document.createEvent('MouseEvents');
+                                    event.initEvent('click', true, true);
+                                    a.dispatchEvent(event);
+                                }
+                                else {
+                                    a.click();
+                                }
+                            }
+                        }
+
+                        function go1() {
+                            wait = 300;
+                            datapos = 1;
+                            send1(puffer[0]);
+                            document.getElementById("infotext").style.visibility = "hidden";
+                            document.getElementById("byte_content").innerHTML = "sending...";
+
+                        }
+
+                        function go2() {
+
+                            wait = 1;
+                            send4(0x00006202);
+                            document.getElementById("infotext").style.visibility = "hidden";
+                            document.getElementById("infotextalt").innerHTML = "Start the Game Boy and press START + SELECT, so that the Nintendo Logo disappears.";
+
+                        }
+
+
+                        function receive() {
+                            flng = 0;
+                            tcount = 0;
+                            kb = 0;
+                            fpuffer = new Uint8Array(65536);
+
+                            if (nlMIDIout) {
+                                try {
+                                    wait = 400;
+                                    nlMIDIout.send([0xf0,
+                                                     0x7e,
+                                                     0x4e,
+                                                     0x07,
+                                                     0x03,
+                                                     0,
+
+                                                     0x4e,
+                                                     0x41,
+                                                     0x4e,
+                                                     0x62,
+
+                                                     0,
+                                                     0,
+                                                     0xf7]);
+                                    document.getElementById("infotext").innerHTML = "setting to receive mode..";
+
+                                }
+                                catch (err) {
+                                    wait = 0;
+                                    document.getElementById("infotext").innerHTML = err.message;
+                                }
+
+                            }
+                        }
+
+
+                        function sendfile() {
+                            fpos = 1;
+                            tcount = 0;
+                            kb = 0;
+                            wait = 500;
+                            send1(fpuffer[0]);
+                        }
+
+
+                        function select(name) {
+                            document.getElementById("s_" + currentselection).style.backgroundColor = "#ddd";
+
+                            if (currentselection != "midimode")
+                                send1(0);
+
+                            currentselection = name;
+                            document.getElementById("s_" + currentselection).style.backgroundColor = "#88ff44";
+
+                            document.getElementById("inhalt").innerHTML = document.getElementById(currentselection + "_d").innerHTML;
+
+                            if (name == "update1") {
+
+                                laden("nl176.gb");
+
+                            }
+
+                            if (name == "update2") {
+                                laden("nanoloop278.mb");
+
+                            }
+
+                            wait = 0;
+
+
+                        }
+
+
+                        </script>
+                    </head>
+    <body>
+        <div id="container">
+            
+            <div id="Seite">
+                
+                
+                <div id="titel">
+                    
+                    
+                    <a href="http://www.nanoloop.com/index.html"><img src="icongrau.png" style="vertical-align:middle" border="0"></a> &nbsp;&nbsp;&nbsp;&nbsp;<h7>Nanoloop USB-MIDI Web version - BETA</h7>
+                    
+                    
+                </div>
+                <br><br><br><br>
+                <img src="nlmidismall.jpg"><br><br>
+                    Device status: <h8 id="midistatus"><br></h8>
+                    <br><br><br>  
+                    <div id="menu" style="visibility:hidden">
+                        <h9 id="s_files"><a href="javascript:select('files');">Manage Files</a></h9> 
+                        <h9 id="s_update1"><a href="javascript:select('update1');">Update nl 1</a></h9> 
+                        <h9 id="s_update2"><a href="javascript:select('update2');">Update nl 2</a></h9> 
+                        <h9 id="s_midimode"><a href="javascript:select('midimode');">MIDI mode</a></h9> 
+                    </div>
+                    <br><br><br>
+                    <div id="inhalt">
+                        Notes
+                        <br><br>
+                        To work correctly, this page needs exclusive access to the USB-MIDI. Do not open another instance of this page in a new tab or window and do not send MIDI to the adaptor otherwise (e.g. DAW). <br><br>
+                        
+                        If the Game Boy doesn't start or hums while connected to the adaptor, unplug it, start the Game Boy and then plug in the cable.<br><br>
+                        If the process hangs and you wish to start over, please reload this page and re-plug the adaptor.
+                    </div>
+                    
+                    <div id="files_d" style="visibility:hidden">  
+                        Buffer content: <h8 id="infotext">empty</h8><br><br>
+                        <button onclick="receive()">receive</button> <button onclick="download(fpuffer,bankname,flng)">save as</button><br><br>
+                        
+                        <button onclick="sendfile()">send</button> <input type="file" name="fileopen" id="openfile" onchange="readBlob('openfile')"/>
+              
+                        <br><br><br>
+                        
+                        To load a bank from nanoloop, click "receive" and then send the bank from nanoloop. When the bank is in the buffer, you can save it as a file with the "save as" button.<br>
+                        To send a bank to nanoloop, select a file to load to the buffer, start the receiving procedure in nanoloop (A+B+down) and then click "send".
+                    </div>
+                    
+                    <div id="update1_d" style="visibility:hidden">
+                        
+                        <h8 id="liste"> </h8>
+                        <br><br>
+                        <div id="byte_content"></div><br>
+                        <h8 id="H1">
+                            To update your nanoloop one cart to version 1.6.5,<br>
+                            <br>
+                            - Start the Game Boy<br><br>
+                            - Hold SELECT until the boot logo appears: <img src="icongrau.png"><br><br>
+                                - Hold SELECT and press START<br><br>
+                                When an "n" appears below the logo, press the button below:
+                                <br><br>
+                                <button onclick="go1()">update</button><br>
+                                </h8>
+                        <h8 id="infotextalt"></h8>
+                        <br><br>
+                        <div id="daten"></div> 
+                    </div>
+                    
+                    
+                    <div id="update2_d" style="visibility:hidden">
+                        
+                        <h8 id="H2"> </h8>
+                        <br><br>
+                        <div id="Div1"></div><br>
+                        <h8 id="H3">
+                            To update your nanoloop 2.x cart to version 2.7.8, press the button below:
+                            <br><br>
+                            <button onclick="go2()">update</button><br><br>
+                            
+                            To select a local file: <input type="file" name="fileopen2" id="openfile2" onchange="readBlob2('openfile2')"/>
+                        </h8>
+                        <h8 id="H4"></h8>
+                        <br><br>
+                        <div id="Div2"></div> 
+                    </div>
+                    
+                    <div id="midimode_d" style="visibility:hidden">
+                        Select the mode for the adaptor:<br><br>
+                        
+                        <button onclick="syncmode()">SYNC</button> to sync with nanoloop<br><br>
+                        <button onclick="midimode()">MIDI</button> for use with mGB<br><br>
+                        
+                        <h8 id="modeinfo"></h8><br><br><br>
+                        
+                        The selected mode is saved to the adaptor's memory and will remain set also when it is unplugged or the computer is powred off.
+                    </div>
+                    
+                    <br><br><br>
+                    
+                    </div>
+            <br><br>
+        </div>
+        </div>
+    </body>
+</html>
